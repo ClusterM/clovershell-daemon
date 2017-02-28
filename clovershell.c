@@ -21,25 +21,29 @@ char* arg2 = "-c";
 #define LOGIN_PROG "getty 0 -L %s vt102"
 #define MAX_SHELL_CONNECTIONS 256
 
-#define CMD_SHELL_NEW_REQ 0
-#define CMD_SHELL_NEW_RESP 1
-#define CMD_SHELL_IN 2
-#define CMD_SHELL_OUT 3
-#define CMD_SHELL_CLOSED 4
-#define CMD_SHELL_KILL 5
-#define CMD_SHELL_KILL_ALL 6
-#define CMD_EXEC_NEW_REQ 7
-#define CMD_EXEC_NEW_RESP 8
-#define CMD_EXEC_STDIN 9
-#define CMD_EXEC_STDOUT 10
-#define CMD_EXEC_STDERR 11
-#define CMD_EXEC_RESULT 12
-#define CMD_EXEC_KILL 13
-#define CMD_EXEC_KILL_ALL 14
+#define CMD_PING 0
+#define CMD_PONG 1
+#define CMD_SHELL_NEW_REQ 2
+#define CMD_SHELL_NEW_RESP 3
+#define CMD_SHELL_IN 4
+#define CMD_SHELL_OUT 5
+#define CMD_SHELL_CLOSED 6
+#define CMD_SHELL_KILL 7
+#define CMD_SHELL_KILL_ALL 8
+#define CMD_EXEC_NEW_REQ 9
+#define CMD_EXEC_NEW_RESP 10
+#define CMD_EXEC_PID 11
+#define CMD_EXEC_STDIN 12
+#define CMD_EXEC_STDOUT 13
+#define CMD_EXEC_STDERR 14
+#define CMD_EXEC_RESULT 15
+#define CMD_EXEC_KILL 16
+#define CMD_EXEC_KILL_ALL 17
 
 struct shell_connection
 {
     int pid;
+    int shell_pid;
     int fdm;
     char fds[128];
 };
@@ -77,17 +81,6 @@ int new_shell_connection()
 void shell_thread(struct shell_connection* c, int id)
 {
     char buff[1024*10];
-
-    // starting getty
-    if (!(c->pid = fork()))
-    {
-        close(u);
-        close(c->fdm);
-        char g[128];
-        sprintf(g, LOGIN_PROG, c->fds);
-        execl(cmd, arg0, arg1, arg2, g, NULL);
-        error("exec getty");
-    }
 
     buff[0] = CMD_SHELL_NEW_RESP;
     buff[1] = id;
@@ -143,12 +136,24 @@ void shell_new_connection()
     if (unlockpt(c->fdm)) error("unlockpt");
     ptsname_r(c->fdm, c->fds, sizeof(c->fds));
     printf("created %d(%s)\n", id, c->fds);
-    c->pid = fork();
-    if (!c->pid)
+
+    // reading thread
+    if (!(c->pid = fork()))
     {
-	sleep(1);
 	shell_thread(c, id);
 	return;
+    }
+
+    // starting getty
+    if (!(c->shell_pid = fork()))
+    {
+	sleep(1);
+        close(u);
+        close(c->fdm);
+        char g[128];
+        sprintf(g, LOGIN_PROG, c->fds);
+        execl(cmd, arg0, arg1, arg2, g, NULL);
+        error("exec getty");
     }
 }
 
@@ -175,10 +180,11 @@ void shell_kill(int id)
     struct shell_connection* c = shell_connections[id];
     if (!c) return;
     close(c->fdm);
+    kill(c->shell_pid, SIGTERM);
     kill(c->pid, SIGTERM);
     free(shell_connections[id]);
     shell_connections[id] = NULL;
-    printf("session %d killed");
+    printf("shell session %d killed\n", id);
 }
 
 void shell_kill_all()
@@ -218,12 +224,18 @@ int main()
 	if (len + 6 != l)
 	{
 	    printf("invalid size: %d != %d\n", l, len);
-	    close(u);
-	    exit(0);
+	    //close(u);
+	    //exit(0);
+	    continue;
 	}
 
 	switch (cmd)
 	{
+	    case CMD_PING:
+		printf("PING? PONG!\n");
+		buff[0] = CMD_PONG;
+		write(u, buff, l);
+		break;
 	    case CMD_SHELL_NEW_REQ:
 		shell_new_connection();
 		break;
