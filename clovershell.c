@@ -58,6 +58,7 @@ struct exec_connection
 {
     int stdout_pid;
     int stderr_pid;
+    int exec_result_pid;
     int exec_pid;
     int stdin[2];
     int stdout[2];
@@ -178,8 +179,8 @@ void shell_kill(int id)
     struct shell_connection* c = shell_connections[id];
     if (!c) return;
     close(c->fdm);
-    kill(c->shell_pid, SIGKILL);
-    kill(c->reading_pid, SIGKILL);
+    if (c->shell_pid) kill(c->shell_pid, SIGKILL);
+    if (c->reading_pid) kill(c->reading_pid, SIGKILL);
     free(shell_connections[id]);
     shell_connections[id] = NULL;
     printf("shell session %d killed\n", id);
@@ -272,7 +273,7 @@ void exec_new_connection(char* cmd, uint16_t len)
     pipe(c->stderr);
 
     // executing
-    if (!(c->exec_pid = fork()))
+    if (!(c->exec_result_pid = fork()))
     {
 	close(STDIN_FILENO);
 	close(STDOUT_FILENO);
@@ -284,8 +285,16 @@ void exec_new_connection(char* cmd, uint16_t len)
 	close(c->stdout[1]);
 	dup2(c->stderr[1], STDERR_FILENO);
 	close(c->stderr[1]);
-	//execl("/bin/sh", "sh", "-c", cmd, (char *) 0);
-	int ret = system(cmd);
+	if (!(c->exec_pid = fork()))
+	{
+	    execl("/bin/sh", "sh", "-c", cmd, (char *) 0);
+	}
+	close(STDIN_FILENO);
+	close(STDOUT_FILENO);
+	close(STDERR_FILENO);
+	int status = -1;
+	waitpid(c->exec_pid, &status, 0);
+	int ret = status;
 	buff[0] = CMD_EXEC_RESULT;
 	buff[1] = id;
         *((uint16_t*)&buff[2]) = sizeof(ret);
@@ -343,9 +352,10 @@ void exec_kill(int id)
     struct exec_connection* c = exec_connections[id];
     if (!c) return;
     close(c->stdin[1]);
-    kill(c->exec_pid, SIGKILL);
-    kill(c->stdout_pid, SIGKILL);
-    kill(c->stderr_pid, SIGKILL);
+    if (c->exec_pid) kill(c->exec_pid, SIGKILL);
+    if (c->exec_result_pid) kill(c->exec_result_pid, SIGKILL);
+    if (c->stdout_pid) kill(c->stdout_pid, SIGKILL);
+    if (c->stderr_pid) kill(c->stderr_pid, SIGKILL);
     free(exec_connections[id]);
     exec_connections[id] = NULL;
     printf("exec session %d killed\n", id);
@@ -393,10 +403,10 @@ void cleanup()
 	{
 	    //printf("Checking exec %d\n", id);
 	    char dead = 1;
-	    if (c->exec_pid && (waitpid(c->exec_pid, NULL, WNOHANG) == 0))
+	    if (c->exec_result_pid && (waitpid(c->exec_result_pid, NULL, WNOHANG) == 0))
 		dead = 0;
 	    else
-		c->exec_pid = 0;
+		c->exec_result_pid = 0;
 	    if (c->stdout_pid && (waitpid(c->stdout_pid, NULL, WNOHANG) == 0))
 		dead = 0;
 	    else
