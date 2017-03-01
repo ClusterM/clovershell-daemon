@@ -167,10 +167,9 @@ void shell_data(int id, char* data, uint16_t len)
     if (write(c->fdm, data, len) < 0)
     {
 	printf("fdm %d(%s) write error\n", id, c->fds);
-	close(c->fdm);
-	kill(c->reading_pid, SIGKILL);
-	free(shell_connections[id]);
-	shell_connections[id] = NULL;
+	if (c->shell_pid) kill(c->shell_pid, SIGKILL);
+	if (c->reading_pid) kill(c->reading_pid, SIGKILL);
+	exit(0);
     }
 }
 
@@ -343,7 +342,14 @@ void exec_stdin(int id, char* data, uint16_t len)
     if (len > 0)
     {
 	if (write(c->stdin[1], data, len) < 0)
+	{
 	    printf("exec %d write error\n", id);
+	    if (c->exec_pid) kill(c->exec_pid, SIGKILL);
+	    if (c->exec_result_pid) kill(c->exec_result_pid, SIGKILL);
+	    if (c->stdout_pid) kill(c->stdout_pid, SIGKILL);
+	    if (c->stderr_pid) kill(c->stderr_pid, SIGKILL);
+	    exit(0);
+	}
     } else close(c->stdin[1]);
 }
 
@@ -387,9 +393,9 @@ void cleanup()
 		dead = 0;
 	    else
 		c->shell_pid = 0;
-	    //printf("Dead: %d\n", dead);
 	    if (dead)
 	    {
+		printf("cleaning %d shell connection\n", id);
 		close(c->fdm);
 		free(c);
 		shell_connections[id] = NULL;
@@ -415,9 +421,9 @@ void cleanup()
 		dead = 0;
 	    else
 		c->stderr_pid = 0;
-	    //printf("Dead: %d\n", dead);
 	    if (dead)
 	    {
+		printf("cleaning %d exec connection\n", id);
 		close(c->stdin[1]);
 		free(c);
 		exec_connections[id] = NULL;
