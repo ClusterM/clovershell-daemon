@@ -56,9 +56,7 @@ struct shell_connection
 
 struct exec_connection
 {
-    int stdout_pid;
-//    int stderr_pid;
-    int exec_result_pid;
+    int exec_wait_pid;
     int exec_pid;
     int stdin[2];
     int stdout[2];
@@ -203,7 +201,7 @@ void shell_kill_all()
 	if (shell_connections[id]) shell_kill(id);
 }
 
-void exec_read_stdout_thread(struct exec_connection* c, int id)
+void read_exec_out(struct exec_connection* c, int id)
 {
     char buff[WRITE_BUFFER_SIZE];
     char stdout_done = 0;
@@ -239,6 +237,7 @@ void exec_read_stdout_thread(struct exec_connection* c, int id)
 	    } else {
 		buff[2] = buff[3] = 0;
 		write_usb(buff, 4);
+		close(stdout);
 		stdout_done = 1;
 	    }
 	}
@@ -254,61 +253,12 @@ void exec_read_stdout_thread(struct exec_connection* c, int id)
 	    } else {
 		buff[2] = buff[3] = 0;
 		write_usb(buff, 4);
+		close(stderr);
 		stderr_done = 1;
 	    }
 	}
     }
-    close(u);
-    exit(0);
-/*
-    // reading pipe in a loop
-    while (1)
-    {
-	long int l = read(c->stdout[0], buff+4, sizeof(buff)-4);
-	buff[0] = CMD_EXEC_STDOUT;
-	buff[1] = id;
-	if (l > 0)
-	{
-	    *((uint16_t*)&buff[2]) = l;
-	    if (write(u, buff, l+4) < 0)
-		exit(1);
-	} else {
-	    buff[2] = buff[3] = 0;
-	    if (write(u, buff, 4) < 0)
-		exit(1);
-	    close(u);
-	    exit(0);
-	}
-    }
-*/
 }
-
-/*
-void exec_read_stderr_thread(struct exec_connection* c, int id)
-{
-    char buff[WRITE_BUFFER_SIZE];
-
-    // reading pipe in a loop
-    while (1)
-    {
-	long int l = read(c->stderr[0], buff+4, sizeof(buff)-4);
-	buff[0] = CMD_EXEC_STDERR;
-	buff[1] = id;
-	if (l > 0)
-	{
-	    *((uint16_t*)&buff[2]) = l;
-	    if (write(u, buff, l+4) < 0)
-		exit(1);
-	} else {
-	    buff[2] = buff[3] = 0;
-	    if (write(u, buff, 4) < 0)
-		exit(1);
-	    close(u);
-	    exit(0);
-	}
-    }
-}
-*/
 
 void exec_new_connection(char* cmd, uint16_t len)
 {
@@ -340,7 +290,7 @@ void exec_new_connection(char* cmd, uint16_t len)
     pipe(c->stderr);
 
     // executing
-    if (!(c->exec_result_pid = fork()))
+    if (!(c->exec_wait_pid = fork()))
     {
 	close(STDIN_FILENO);
 	close(STDOUT_FILENO);
@@ -359,12 +309,13 @@ void exec_new_connection(char* cmd, uint16_t len)
 	close(STDIN_FILENO);
 	close(STDOUT_FILENO);
 	close(STDERR_FILENO);
+	read_exec_out(c, id);
 	int status = -1;
 	waitpid(c->exec_pid, &status, 0);
 	int ret = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 	buff[0] = CMD_EXEC_RESULT;
 	buff[1] = id;
-        *((uint16_t*)&buff[2]) = sizeof(ret);
+	*((uint16_t*)&buff[2]) = sizeof(ret);
 	*((int*)&buff[4]) = ret;
 	write_usb(buff, 4+sizeof(ret));
         close(u);
@@ -372,29 +323,6 @@ void exec_new_connection(char* cmd, uint16_t len)
     }
 
     close(c->stdin[0]); // unused in this thread
-
-    // stdout reading thread
-    if (!(c->stdout_pid = fork()))
-    {
-	close(c->stdin[1]); // unused
-	close(c->stdout[1]); // unused
-	//close(c->stderr[0]); // unused
-	close(c->stderr[1]); // unused
-	exec_read_stdout_thread(c, id);
-    }
-    /*
-    // stderr reading thread
-    if (!(c->stderr_pid = fork()))
-    {
-	close(c->stdin[1]); // unused
-	close(c->stderr[1]); // unused
-	close(c->stdout[0]); // unused
-	close(c->stdout[1]); // unused
-	exec_read_stderr_thread(c, id);
-    }
-    */
-
-    // unused
     close(c->stdout[0]);
     close(c->stdout[1]);
     close(c->stderr[0]);
@@ -415,9 +343,7 @@ void exec_stdin(int id, char* data, uint16_t len)
 	{
 	    printf("exec %d write error\n", id);
 	    if (c->exec_pid) kill(c->exec_pid, SIGKILL);
-	    if (c->exec_result_pid) kill(c->exec_result_pid, SIGKILL);
-	    if (c->stdout_pid) kill(c->stdout_pid, SIGKILL);
-	    //if (c->stderr_pid) kill(c->stderr_pid, SIGKILL);
+	    if (c->exec_wait_pid) kill(c->exec_wait_pid, SIGKILL);
 	    exit(0);
 	}
     } else close(c->stdin[1]);
@@ -429,9 +355,7 @@ void exec_kill(int id)
     if (!c) return;
     close(c->stdin[1]);
     if (c->exec_pid) kill(c->exec_pid, SIGKILL);
-    if (c->exec_result_pid) kill(c->exec_result_pid, SIGKILL);
-    if (c->stdout_pid) kill(c->stdout_pid, SIGKILL);
-    //if (c->stderr_pid) kill(c->stderr_pid, SIGKILL);
+    if (c->exec_wait_pid) kill(c->exec_wait_pid, SIGKILL);
     free(exec_connections[id]);
     exec_connections[id] = NULL;
     printf("exec session %d killed\n", id);
@@ -479,20 +403,14 @@ void cleanup()
 	{
 	    //printf("Checking exec %d\n", id);
 	    char dead = 1;
-	    if (c->exec_result_pid && (waitpid(c->exec_result_pid, NULL, WNOHANG) == 0))
+	    if (c->exec_wait_pid && (waitpid(c->exec_wait_pid, NULL, WNOHANG) == 0))
 		dead = 0;
 	    else
-		c->exec_result_pid = 0;
-	    if (c->stdout_pid && (waitpid(c->stdout_pid, NULL, WNOHANG) == 0))
+		c->exec_wait_pid = 0;
+	    if (c->exec_pid && (waitpid(c->exec_pid, NULL, WNOHANG) == 0))
 		dead = 0;
 	    else
-		c->stdout_pid = 0;
-	    /*
-	    if (c->stderr_pid && (waitpid(c->stderr_pid, NULL, WNOHANG) == 0))
-		dead = 0;
-	    else
-		c->stderr_pid = 0;
-	    */
+		c->exec_pid = 0;
 	    if (dead)
 	    {
 		printf("cleaning %d exec connection\n", id);
