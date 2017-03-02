@@ -82,6 +82,21 @@ void sig_handler(int signo)
     exit(0);
 }
 
+void write_usb(char* data, int len)
+{
+    while (len > 0)
+    {
+	int l = write(u, data, len);
+	if (l >= 0)
+	{
+	    data += l;
+	    len -= l;
+	} else {
+	    error("can't write to USB");
+	}
+    }
+}
+
 void shell_read_thread(struct shell_connection* c, int id)
 {
     char buff[WRITE_BUFFER_SIZE];
@@ -96,17 +111,13 @@ void shell_read_thread(struct shell_connection* c, int id)
 	    buff[0] = CMD_SHELL_OUT;
 	    buff[1] = id;
 	    *((uint16_t*)&buff[2]) = l;
-	    if (write(u, buff, l+4) < 0)
-	    {
-		printf("usb write error\n");
-		exit(0);
-	    }
+	    write_usb(buff, l+4);
 	} else { // end of session
 	    printf("tty %d(%s) eof\n", id, c->fds);
 	    buff[0] = CMD_SHELL_CLOSED;
 	    buff[1] = id;
 	    buff[2] = buff[3] = 0;
-	    write(u, buff, 4);
+	    write_usb(buff, 4);
 	    close(u);
 	    exit(0);
 	}
@@ -138,7 +149,7 @@ void shell_new_connection()
     buff[0] = CMD_SHELL_NEW_RESP;
     buff[1] = id;
     buff[2] = buff[3] = 0;
-    write(u, buff, 4);
+    write_usb(buff, 4);
 
     // starting getty
     if (!(c->shell_pid = fork()))
@@ -224,12 +235,10 @@ void exec_read_stdout_thread(struct exec_connection* c, int id)
 	    if (l > 0)
 	    {
 		*((uint16_t*)&buff[2]) = l;
-		if (write(u, buff, l+4) < 0)
-		    exit(1);
+		write_usb(buff, l+4);
 	    } else {
 		buff[2] = buff[3] = 0;
-		if (write(u, buff, 4) < 0)
-		    exit(1);
+		write_usb(buff, 4);
 		stdout_done = 1;
 	    }
 	}
@@ -241,12 +250,10 @@ void exec_read_stdout_thread(struct exec_connection* c, int id)
 	    if (l > 0)
 	    {
 		*((uint16_t*)&buff[2]) = l;
-		if (write(u, buff, l+4) < 0)
-		    exit(1);
+		write_usb(buff, l+4);
 	    } else {
 		buff[2] = buff[3] = 0;
-		if (write(u, buff, 4) < 0)
-		    exit(1);
+		write_usb(buff, 4);
 		stderr_done = 1;
 	    }
 	}
@@ -326,7 +333,7 @@ void exec_new_connection(char* cmd, uint16_t len)
     buff[1] = id;
     *((uint16_t*)&buff[2]) = len;
     strcpy(&buff[4], cmd);
-    write(u, buff, 4+len);
+    write_usb(buff, 4+len);
 
     pipe(c->stdin);
     pipe(c->stdout);
@@ -359,7 +366,7 @@ void exec_new_connection(char* cmd, uint16_t len)
 	buff[1] = id;
         *((uint16_t*)&buff[2]) = sizeof(ret);
 	*((int*)&buff[4]) = ret;
-	write(u, buff, 4+sizeof(ret));
+	write_usb(buff, 4+sizeof(ret));
         close(u);
 	exit(0);
     }
@@ -508,7 +515,7 @@ int main(int argc, char **argv)
 	exec_connections[i] = NULL;
 
     if (signal(SIGTERM, sig_handler) == SIG_ERR) error("SIGTERM");
-    u = open(DEVICE_PATH, O_RDWR|O_NOCTTY, 0);
+    u = open(DEVICE_PATH, O_RDWR|O_NOCTTY|O_DSYNC);
     if (u < 0) error("usb open");
 
     char buff[READ_BUFFER_SIZE];
@@ -542,7 +549,7 @@ int main(int argc, char **argv)
 	    case CMD_PING:
 		printf("PING? PONG!\n");
 		buff[0] = CMD_PONG;
-		write(u, buff, l);
+		write_usb(buff, l);
 		break;
 	    case CMD_SHELL_NEW_REQ:
 		shell_new_connection();
