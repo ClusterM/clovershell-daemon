@@ -23,8 +23,8 @@ char* arg2 = "-c";
 #define LOGIN_PROG "getty 0 -L %s vt102"
 #define MAX_SHELL_CONNECTIONS 256
 #define MAX_EXEC_CONNECTIONS 256
-#define WRITE_BUFFER_SIZE 32768
-#define READ_BUFFER_SIZE 32768
+#define WRITE_BUFFER_SIZE 32767
+#define READ_BUFFER_SIZE  32767
 #define CLEANUP_INTERVAL 60
 
 #define CMD_PING 0
@@ -57,7 +57,7 @@ struct shell_connection
 struct exec_connection
 {
     int stdout_pid;
-    int stderr_pid;
+//    int stderr_pid;
     int exec_result_pid;
     int exec_pid;
     int stdin[2];
@@ -195,11 +195,69 @@ void shell_kill_all()
 void exec_read_stdout_thread(struct exec_connection* c, int id)
 {
     char buff[WRITE_BUFFER_SIZE];
-
+    char stdout_done = 0;
+    char stderr_done = 0;
+    int stdout = c->stdout[0];
+    int stderr = c->stderr[0];
+    while (!stdout_done || !stderr_done)
+    {
+	fd_set read_fds;
+	FD_ZERO(&read_fds);
+	int fdmax = 0;
+	if (!stdout_done)
+	{
+	    if (stdout > fdmax) fdmax = stdout;
+	    FD_SET(stdout, &read_fds);
+	}
+	if (!stderr_done)
+	{
+	    if (stderr > fdmax) fdmax = stderr;
+	    FD_SET(stderr, &read_fds);
+	}
+	if (select(fdmax+1, &read_fds, NULL, NULL, NULL) == -1)
+	    error("select");
+	if(FD_ISSET(stdout, &read_fds))
+	{
+	    long int l = read(stdout, buff+4, sizeof(buff)-4);
+	    buff[0] = CMD_EXEC_STDOUT;
+	    buff[1] = id;
+	    if (l > 0)
+	    {
+		*((uint16_t*)&buff[2]) = l;
+		if (write(u, buff, l+4) < 0)
+		    exit(1);
+	    } else {
+		buff[2] = buff[3] = 0;
+		if (write(u, buff, 4) < 0)
+		    exit(1);
+		stdout_done = 1;
+	    }
+	}
+	if(FD_ISSET(stderr, &read_fds))
+	{
+	    long int l = read(stderr, buff+4, sizeof(buff)-4);
+	    buff[0] = CMD_EXEC_STDERR;
+	    buff[1] = id;
+	    if (l > 0)
+	    {
+		*((uint16_t*)&buff[2]) = l;
+		if (write(u, buff, l+4) < 0)
+		    exit(1);
+	    } else {
+		buff[2] = buff[3] = 0;
+		if (write(u, buff, 4) < 0)
+		    exit(1);
+		stderr_done = 1;
+	    }
+	}
+    }
+    close(u);
+    exit(0);
+/*
     // reading pipe in a loop
     while (1)
     {
-	int l = read(c->stdout[0], buff+4, sizeof(buff)-4);
+	long int l = read(c->stdout[0], buff+4, sizeof(buff)-4);
 	buff[0] = CMD_EXEC_STDOUT;
 	buff[1] = id;
 	if (l > 0)
@@ -215,8 +273,10 @@ void exec_read_stdout_thread(struct exec_connection* c, int id)
 	    exit(0);
 	}
     }
+*/
 }
 
+/*
 void exec_read_stderr_thread(struct exec_connection* c, int id)
 {
     char buff[WRITE_BUFFER_SIZE];
@@ -224,7 +284,7 @@ void exec_read_stderr_thread(struct exec_connection* c, int id)
     // reading pipe in a loop
     while (1)
     {
-	int l = read(c->stderr[0], buff+4, sizeof(buff)-4);
+	long int l = read(c->stderr[0], buff+4, sizeof(buff)-4);
 	buff[0] = CMD_EXEC_STDERR;
 	buff[1] = id;
 	if (l > 0)
@@ -241,6 +301,7 @@ void exec_read_stderr_thread(struct exec_connection* c, int id)
 	}
     }
 }
+*/
 
 void exec_new_connection(char* cmd, uint16_t len)
 {
@@ -293,7 +354,7 @@ void exec_new_connection(char* cmd, uint16_t len)
 	close(STDERR_FILENO);
 	int status = -1;
 	waitpid(c->exec_pid, &status, 0);
-	int ret = status;
+	int ret = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 	buff[0] = CMD_EXEC_RESULT;
 	buff[1] = id;
         *((uint16_t*)&buff[2]) = sizeof(ret);
@@ -310,10 +371,11 @@ void exec_new_connection(char* cmd, uint16_t len)
     {
 	close(c->stdin[1]); // unused
 	close(c->stdout[1]); // unused
-	close(c->stderr[0]); // unused
+	//close(c->stderr[0]); // unused
 	close(c->stderr[1]); // unused
 	exec_read_stdout_thread(c, id);
     }
+    /*
     // stderr reading thread
     if (!(c->stderr_pid = fork()))
     {
@@ -323,6 +385,7 @@ void exec_new_connection(char* cmd, uint16_t len)
 	close(c->stdout[1]); // unused
 	exec_read_stderr_thread(c, id);
     }
+    */
 
     // unused
     close(c->stdout[0]);
@@ -347,7 +410,7 @@ void exec_stdin(int id, char* data, uint16_t len)
 	    if (c->exec_pid) kill(c->exec_pid, SIGKILL);
 	    if (c->exec_result_pid) kill(c->exec_result_pid, SIGKILL);
 	    if (c->stdout_pid) kill(c->stdout_pid, SIGKILL);
-	    if (c->stderr_pid) kill(c->stderr_pid, SIGKILL);
+	    //if (c->stderr_pid) kill(c->stderr_pid, SIGKILL);
 	    exit(0);
 	}
     } else close(c->stdin[1]);
@@ -361,7 +424,7 @@ void exec_kill(int id)
     if (c->exec_pid) kill(c->exec_pid, SIGKILL);
     if (c->exec_result_pid) kill(c->exec_result_pid, SIGKILL);
     if (c->stdout_pid) kill(c->stdout_pid, SIGKILL);
-    if (c->stderr_pid) kill(c->stderr_pid, SIGKILL);
+    //if (c->stderr_pid) kill(c->stderr_pid, SIGKILL);
     free(exec_connections[id]);
     exec_connections[id] = NULL;
     printf("exec session %d killed\n", id);
@@ -417,10 +480,12 @@ void cleanup()
 		dead = 0;
 	    else
 		c->stdout_pid = 0;
+	    /*
 	    if (c->stderr_pid && (waitpid(c->stderr_pid, NULL, WNOHANG) == 0))
 		dead = 0;
 	    else
 		c->stderr_pid = 0;
+	    */
 	    if (dead)
 	    {
 		printf("cleaning %d exec connection\n", id);
@@ -454,7 +519,7 @@ int main(int argc, char **argv)
 
     while (1)
     {	
-	int l = read(u, buff, sizeof(buff));
+	long int l = read(u, buff, sizeof(buff));
 	if (l <= 0)
 	{
 	    printf("usb eof\n");
@@ -468,7 +533,7 @@ int main(int argc, char **argv)
 	char* data = &buff[4];
 	if (len + 4 != l)
 	{
-	    printf("invalid size: %d != %d\n", l, len);
+	    //printf("invalid size: %d != %d\n", l, len);
 	    continue;
 	}
 
