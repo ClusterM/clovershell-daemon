@@ -1,18 +1,21 @@
 ### 
-### I think it's not worth to make such a small project
-### modular. So this is a simple gnu Makefile...
+### clovershell daemon (c) Cluster, 2017
+### http://clusterrr.com
+### clusterrr@clusterrr.com
 ###
 
-.DELETE_ON_ERROR:
-.PHONY: install clean all
-
-CFLAGS-NES += -L../nesmini/lib -L../nesmini/usr/lib -Wl,--dynamic-linker=/lib/ld-linux-armhf.so.3,-sysroot=/usr/home/cluster/nesmini,-rpath,-nostartfiles
+CFLAGS-NES += -Wl,--dynamic-linker=/lib/ld-linux-armhf.so.3,-rpath,-nostartfiles
 CC-NES = arm-linux-gnueabihf-gcc
+TARGET=mod/bin/clovershell
+HMOD=clovershell.hmod
 
-all: clovershell
+all: $(HMOD)
 
-clovershell: clovershell.c
-	$(CC-NES) -g -Wall $(CFLAGS-NES) $(LDFLAGS-NES) $< -o clovershell
+$(HMOD): $(TARGET)
+	cd mod && tar -czvf ../$(HMOD) *
+
+$(TARGET): clovershell.c
+	$(CC-NES) -g -Wall $(CFLAGS-NES) $(LDFLAGS-NES) $< -o $(TARGET)
 
 clean:
-	-$(RM) clovershell *~ \#*\#
+	rm -f $(TARGET) $(HMOD) *~ \#*\#

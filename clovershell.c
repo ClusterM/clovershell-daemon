@@ -1,3 +1,9 @@
+/*
+*** clovershell daemon (c) Cluster, 2017
+*** http://clusterrr.com
+*** clusterrr@clusterrr.com
+*/
+
 #define _XOPEN_SOURCE 600
 #define _GNU_SOURCE
 #include <stdio.h>
