@@ -182,25 +182,6 @@ void shell_data(int id, char* data, uint16_t len)
     }
 }
 
-void shell_kill(int id)
-{
-    struct shell_connection* c = shell_connections[id];
-    if (!c) return;
-    close(c->fdm);
-    if (c->shell_pid) kill(c->shell_pid, SIGKILL);
-    if (c->reading_pid) kill(c->reading_pid, SIGKILL);
-    free(shell_connections[id]);
-    shell_connections[id] = NULL;
-    printf("shell session %d killed\n", id);
-}
-
-void shell_kill_all()
-{
-    int id;
-    for (id = 0; id < MAX_SHELL_CONNECTIONS; id++)
-	if (shell_connections[id]) shell_kill(id);
-}
-
 void read_exec_out(struct exec_connection* c, int id)
 {
     char buff[WRITE_BUFFER_SIZE];
@@ -305,6 +286,7 @@ void exec_new_connection(char* cmd, uint16_t len)
 	if (!(c->exec_pid = fork()))
 	{
 	    execl("/bin/sh", "sh", "-c", cmd, (char *) 0);
+	    exit(1);
 	}
 	close(STDIN_FILENO);
 	close(STDOUT_FILENO);
@@ -347,25 +329,6 @@ void exec_stdin(int id, char* data, uint16_t len)
 	    exit(0);
 	}
     } else close(c->stdin[1]);
-}
-
-void exec_kill(int id)
-{
-    struct exec_connection* c = exec_connections[id];
-    if (!c) return;
-    close(c->stdin[1]);
-    if (c->exec_pid) kill(c->exec_pid, SIGKILL);
-    if (c->exec_wait_pid) kill(c->exec_wait_pid, SIGKILL);
-    free(exec_connections[id]);
-    exec_connections[id] = NULL;
-    printf("exec session %d killed\n", id);
-}
-
-void exec_kill_all()
-{
-    int id;
-    for (id = 0; id < MAX_EXEC_CONNECTIONS; id++)
-	if (exec_connections[id]) exec_kill(id);
 }
 
 void cleanup()
@@ -421,6 +384,46 @@ void cleanup()
 	}
     }
 
+}
+
+void shell_kill(int id)
+{
+    struct shell_connection* c = shell_connections[id];
+    if (!c) return;
+    close(c->fdm);
+    if (c->shell_pid) kill(c->shell_pid, SIGKILL);
+    if (c->reading_pid) kill(c->reading_pid, SIGKILL);
+    //free(shell_connections[id]);
+    //shell_connections[id] = NULL;
+    printf("shell session %d killed\n", id);
+}
+
+void shell_kill_all()
+{
+    int id;
+    for (id = 0; id < MAX_SHELL_CONNECTIONS; id++)
+	if (shell_connections[id]) shell_kill(id);
+    cleanup();
+}
+
+void exec_kill(int id)
+{
+    struct exec_connection* c = exec_connections[id];
+    if (!c) return;
+    close(c->stdin[1]);
+    if (c->exec_pid) kill(c->exec_pid, SIGKILL);
+    if (c->exec_wait_pid) kill(c->exec_wait_pid, SIGKILL);
+    //free(exec_connections[id]);
+    //exec_connections[id] = NULL;
+    printf("exec session %d killed\n", id);
+}
+
+void exec_kill_all()
+{
+    int id;
+    for (id = 0; id < MAX_EXEC_CONNECTIONS; id++)
+	if (exec_connections[id]) exec_kill(id);
+    cleanup();
 }
 
 int main(int argc, char **argv)
