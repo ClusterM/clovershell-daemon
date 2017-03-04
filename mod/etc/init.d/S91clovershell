@@ -6,7 +6,7 @@ PRODUCT_ID="efe8"
 
 start() {
     echo   "0"                   > "$CONFIGFS/enable"
-    echo   "VENDOR_ID" > "$CONFIGFS/idVendor"
+    echo   "$VENDOR_ID" > "$CONFIGFS/idVendor"
     echo   "$PRODUCT_ID"   > "$CONFIGFS/idProduct"
     echo   "clover" > "$CONFIGFS/functions"
     echo   "1"                   > "$CONFIGFS/enable"
