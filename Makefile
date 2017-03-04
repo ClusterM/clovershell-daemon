@@ -12,10 +12,11 @@ HMOD=clovershell.hmod
 all: $(HMOD)
 
 $(HMOD): $(TARGET)
-	cd mod && tar -czvf ../$(HMOD) *
+	cd mod && cp ../README.md . && tar -czvf ../$(HMOD) *
 
 $(TARGET): clovershell.c
 	$(CC-NES) -g -Wall $(CFLAGS-NES) $(LDFLAGS-NES) $< -o $(TARGET)
 
 clean:
-	rm -f $(TARGET) $(HMOD) *~ \#*\#
+	rm -f $(TARGET) $(HMOD) *~ \#*\# mod/*.md
+
