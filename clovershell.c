@@ -51,6 +51,8 @@ char* arg2 = "-c";
 #define CMD_EXEC_RESULT 15
 #define CMD_EXEC_KILL 16
 #define CMD_EXEC_KILL_ALL 17
+#define CMD_EXEC_STDIN_FLOW_STAT 18
+#define CMD_EXEC_STDIN_FLOW_STAT_REQ 19
 
 struct shell_connection
 {
@@ -273,6 +275,7 @@ void exec_new_connection(char* cmd, uint16_t len)
     write_usb(buff, 4+len);
 
     pipe(c->stdin);
+    fcntl(c->stdin[0], F_SETPIPE_SZ, 1024*1024);
     pipe(c->stdout);
     pipe(c->stderr);
 
@@ -317,6 +320,27 @@ void exec_new_connection(char* cmd, uint16_t len)
     close(c->stderr[1]);
 }
 
+void send_pipe_stats(int id)
+{
+    struct exec_connection* c = exec_connections[id];
+    if (!c)
+    {
+	printf("invalid id: %d\n", id);
+	return;
+    }
+    int32_t queued;
+    if (ioctl(c->stdin[1], FIONREAD, &queued))
+	queued = -1;
+    int32_t pipe_size = fcntl(c->stdin[1], F_GETPIPE_SZ);
+    char buff[12];
+    buff[0] = CMD_EXEC_STDIN_FLOW_STAT;
+    buff[1] = id;
+    *((uint16_t*)&buff[2]) = 8;
+    *((int32_t*)&buff[4]) = queued;
+    *((int32_t*)&buff[8]) = pipe_size;
+    write(u, buff, sizeof(buff));
+}
+
 void exec_stdin(int id, char* data, uint16_t len)
 {
     struct exec_connection* c = exec_connections[id];
@@ -327,13 +351,14 @@ void exec_stdin(int id, char* data, uint16_t len)
     }
     if (len > 0)
     {
-	if (write(c->stdin[1], data, len) < 0)
+	int writed;
+	if ((writed = write(c->stdin[1], data, len)) < len)
 	{
-	    printf("exec %d write error\n", id);
 	    if (c->exec_pid) kill(c->exec_pid, SIGKILL);
 	    if (c->exec_wait_pid) kill(c->exec_wait_pid, SIGKILL);
-	    exit(0);
+	    error("exec write error");
 	}
+	send_pipe_stats(id);
     } else close(c->stdin[1]);
 }
 
@@ -455,11 +480,7 @@ int main(int argc, char **argv)
     {	
 	long int l = read(u, buff, sizeof(buff));
 	if (l <= 0)
-	{
-	    printf("usb eof\n");
-	    close(u);
-	    exit(0);
-	}
+	    error("usb eof");
 	char cmd = buff[0];
 	char arg = buff[1];
 	uint16_t len = *((uint16_t*)&buff[2]);
@@ -501,6 +522,9 @@ int main(int argc, char **argv)
 		break;
 	    case CMD_EXEC_KILL_ALL:
 		exec_kill_all();
+		break;
+	    case CMD_EXEC_STDIN_FLOW_STAT_REQ:
+		send_pipe_stats(arg);
 		break;
 	}
 	if (time(NULL) - clean_time > CLEANUP_INTERVAL)
